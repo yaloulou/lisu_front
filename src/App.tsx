@@ -10,6 +10,7 @@ import { RecordDetail, RecordEditor, RecordList } from './pages/Records'
 import { Users } from './pages/Users'
 import { Dashboard } from './pages/Dashboard'
 import { MapPage } from './pages/Map'
+import { initialIntelFilters } from './lib/dashboard'
 
 interface NavItem { path: string; label: string; icon: string }
 function Forbidden() { return <div className="access-page"><span className="empty-icon"><Icon name="lock" size={32} /></span><span className="eyebrow">Accès restreint</span><h1>Cette page n’est pas accessible</h1><p>Votre rôle ou votre affectation au desk ne permet pas cette action.</p><button className="button primary" onClick={() => navigate('/observations')}>Revenir aux informations</button></div> }
@@ -34,7 +35,7 @@ function Content({ route, user }: { route: string; user: User }) {
     if (normalized !== config.path && !normalized.startsWith(config.path + '/')) continue
     if (!canRead(user, resource)) return <Forbidden />
     const suffix = normalized.slice(config.path.length).split('/').filter(Boolean)
-    if (!suffix.length) return <RecordList resource={resource} user={user} />
+    if (!suffix.length) return <RecordList resource={resource} user={user} initialFilters={resource === 'intel' ? initialIntelFilters(query) : undefined} />
     if (suffix[0] === 'new' && suffix.length === 1) return canCreate(user, resource) ? <RecordEditor resource={resource} user={user} /> : <Forbidden />
     let id: string
     try { id = decodeURIComponent(suffix[0]) } catch { return <Alert error>L’identifiant dans l’adresse est invalide.</Alert> }

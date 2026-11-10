@@ -49,9 +49,9 @@ function downloadCsv(resource: Resource, items: Data[]) {
   const url = URL.createObjectURL(new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' }))
   const link = document.createElement('a'); link.href = url; link.download = `LISU-${resource}-${new Date().toISOString().slice(0, 10)}.csv`; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-export function RecordList({ resource, user }: { resource: Resource; user: User }) {
+export function RecordList({ resource, user, initialFilters }: { resource: Resource; user: User; initialFilters?: Data }) {
   const config = configs[resource], reviewer = canReview(user)
-  const [draft, setDraft] = useState<Data>(resource === 'observations' && reviewer ? { status: 'pending' } : {})
+  const [draft, setDraft] = useState<Data>(initialFilters || (resource === 'observations' && reviewer ? { status: 'pending' } : {}))
   const [filters, setFilters] = useState(draft), [page, setPage] = useState(1)
   const [deleteRecord, setDeleteRecord] = useState<Data | null>(null), [reviewRecord, setReviewRecord] = useState<Data | null>(null)
   const result = useRemote(useCallback(async (signal: AbortSignal) => list(await api(`${recordPath(resource)}/search`, { method: 'POST', body: { ...filters, size: 500 }, signal })), [resource, filters]))
@@ -77,6 +77,7 @@ export function RecordList({ resource, user }: { resource: Resource; user: User 
       {!['entities', 'links'].includes(resource) && <><label className="date-filter"><span>Du</span><input type="date" aria-label="Date de début" value={string(draft.dateFrom)} onChange={event => changeFilter('dateFrom', event.target.value)} /></label><label className="date-filter"><span>Au</span><input type="date" aria-label="Date de fin" value={string(draft.dateTo).slice(0, 10)} onChange={event => changeFilter('dateTo', event.target.value ? new Date(event.target.value + 'T23:59:59.999').toISOString() : undefined)} /></label></>}
       <button className="button primary" disabled={result.loading}>{result.loading ? <Spinner /> : <Icon name="search" size={17} />}Rechercher</button><button className="button quiet" type="button" onClick={() => { setDraft({}); setFilters({}); setPage(1) }}>Réinitialiser</button>
     </form>
+    {resource === 'intel' && !!(draft.actor || draft.impact || draft.event) && <div className="dashboard-search-context">{[['actor', 'Acteur'], ['event', 'Nature'], ['impact', 'Bilan']].filter(([key]) => draft[key]).map(([key, label]) => <span key={key}>{label} : {key === 'impact' ? ({ civilian_deaths: 'décès civils', deaths: 'décès', injured: 'blessés', missing: 'enlevés / disparus', significant: 'décès civils ou enlèvements' }[string(draft[key])] || string(draft[key])) : string(draft[key])}<button className="icon-button" type="button" aria-label={`Retirer le filtre ${label.toLowerCase()}`} onClick={() => { setDraft(previous => ({ ...previous, [key]: undefined })); setFilters(previous => ({ ...previous, [key]: undefined })); setPage(1) }}><Icon name="close" size={13} /></button></span>)}</div>}
     <div className="table-toolbar"><span><strong>{result.value?.count || 0}</strong> enregistrement{result.value?.count === 1 ? '' : 's'}{result.value && result.value.count > items.length ? ` · ${items.length} chargés, affinez la recherche` : ''}</span><div className="row-actions"><button className="button quiet small" onClick={result.reload} disabled={result.loading}><Icon name="refresh" size={16} />Actualiser</button><button className="button quiet small" onClick={() => downloadCsv(resource, items)} disabled={!items.length || result.loading}><Icon name="download" size={16} />CSV</button></div></div>
     {result.error ? <div className="panel-padding"><Alert error>{result.error}</Alert></div> : result.loading ? <Loading /> : !items.length ? <Empty title={resource === 'observations' && !reviewer ? 'Aucune information à afficher' : 'Aucun enregistrement trouvé'} /> : <div className="table-scroll"><table><thead><tr>{config.columns.map(column => <th key={column.path}>{column.label}</th>)}<th className="actions-column">Actions</th></tr></thead><tbody>{items.slice((currentPage - 1) * perPage, currentPage * perPage).map(item => <tr key={idOf(item)}>{config.columns.map(column => <td key={column.path}><Cell item={item} path={column.path} user={user} showSearchExcerpt={resource === 'intel' && !!string(filters.search).trim()} /></td>)}<td><div className="row-actions">
       <button className="icon-button" aria-label={`Consulter ${title(item)}`} title="Consulter" onClick={() => navigate(`${config.path}/${encodeURIComponent(idOf(item))}`)}><Icon name="eye" size={18} /></button>
@@ -98,6 +99,16 @@ export function RecordEditor({ resource, id, user }: { resource: Resource; id?: 
   if (result.error) return <Alert error>{result.error}</Alert>
   return <EditorForm resource={resource} initial={result.value || {}} user={user} id={id} />
 }
+const hiddenObservationFields = new Set([
+  'event_ref',
+  'source.source_ref',
+  'source.collector',
+  'source.unit',
+  'source.collection_method',
+  'evaluation.confidence',
+  'classification.compartments',
+])
+
 function EditorForm({ resource, initial, user, id }: { resource: Resource; initial: Data; user: User; id?: string }) {
   const config = configs[resource]
   const [data, setData] = useState<Data>(() => structuredClone(initial)), [busy, setBusy] = useState(false), [error, setError] = useState(''), [photo, setPhoto] = useState<File | null>(null)
@@ -130,7 +141,18 @@ function EditorForm({ resource, initial, user, id }: { resource: Resource; initi
     <form onSubmit={save} className="record-form">
       {error && <Alert error>{error}</Alert>}
       <fieldset disabled={busy}>
-        {visibleSections(config, data).map((section, index) => <section className="form-section" key={section.title}><div className="section-heading"><h2><span className="section-number">{String(index + 1).padStart(2, '0')}</span>{section.title}</h2></div><div className="form-grid">{section.fields.map(field => <FieldInput field={field} data={data} onChange={change} user={user} key={field.path} />)}</div></section>)}
+        {visibleSections(config, data).map((section, index) => (
+          <section className="form-section" key={section.title}>
+            <div className="section-heading">
+              <h2><span className="section-number">{String(index + 1).padStart(2, '0')}</span>{section.title}</h2>
+            </div>
+            <div className="form-grid">
+              {section.fields
+                .filter(field => resource !== 'observations' || !hiddenObservationFields.has(field.path))
+                .map(field => <FieldInput field={field} data={data} onChange={change} user={user} key={field.path} />)}
+            </div>
+          </section>
+        ))}
         {config.collections.map(collection => <ArrayFields definition={collection} data={data} onChange={change} user={user} key={collection.path} disabled={busy} />)}
         {resource === 'entities' && <section className="form-section"><div className="section-heading"><h2>Photo de profil</h2></div><div className="photo-editor"><RecordPhoto record={data} large /><div><label className="button secondary"><Icon name="upload" />Choisir une photo<input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file && (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024 || !file.size)) { setError('Choisissez une image JPG, PNG, GIF ou WebP de 5 Mo maximum.'); event.target.value = ''; return } setPhoto(file || null); setDirty(true) }} /></label><p className="muted">{photo?.name || 'JPG, PNG, GIF ou WebP · 5 Mo maximum'}</p>{rows(data.media_refs).some(item => item.role === 'profile') && <button className="button quiet small" type="button" onClick={() => change({ ...data, media_refs: rows(data.media_refs).filter(item => item.role !== 'profile') })}>Retirer la photo actuelle</button>}</div></div></section>}
         {(resource === 'observations' || resource === 'events') && <Evidence ref={evidence} value={(data.evidence as EvidenceRef[]) || []} context={resource} recordId={id} disabled={busy} onChange={refs => { setDirty(true); setData(previous => ({ ...previous, evidence: refs })) }} />}

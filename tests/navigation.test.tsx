@@ -25,6 +25,20 @@ it('bloque un accès direct à la création CCOC et à la gestion des comptes', 
   window.location.hash = '/admin/users'; view.rerender(<App />)
   expect(screen.getByText('Cette page n’est pas accessible')).toBeTruthy()
 })
+
+it('transmet les filtres du tableau de bord à la recherche CCOC et permet de les retirer', async () => {
+  session.user = { ...session.user!, desk: 'CCOC' }
+  window.location.hash = '/search?province_region=Nord-Kivu&territoire_ville=Beni&actor=Alpha&impact=civilian_deaths&event=Attaque&dateFrom=2026-10-01&dateTo=2026-10-03'
+  render(<App />)
+  await screen.findByText('Aucun enregistrement trouvé')
+  expect(api).toHaveBeenCalledWith('/api/intel/search', expect.objectContaining({ body: {
+    province_region: 'Nord-Kivu', territoire_ville: 'Beni', actor: 'Alpha', impact: 'civilian_deaths', event: 'Attaque', dateFrom: '2026-10-01', dateTo: '2026-10-03', size: 500,
+  } }))
+  expect(screen.getByText('Acteur : Alpha')).toBeTruthy()
+  await userEvent.click(screen.getByRole('button', { name: 'Retirer le filtre acteur' }))
+  expect(screen.queryByText('Acteur : Alpha')).toBeNull()
+  expect(api).toHaveBeenCalledWith('/api/intel/search', expect.objectContaining({ body: expect.objectContaining({ actor: undefined, impact: 'civilian_deaths', province_region: 'Nord-Kivu' }) }))
+})
 it('cache les modules non autorisés aux officiers tout en permettant leur dépôt d’information', async () => {
   session.user = { ...session.user!, role: 'officier', desk: 'terrain' }
   render(<App />)
