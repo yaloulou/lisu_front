@@ -198,26 +198,42 @@ function IncidentTable({
 }
 
 export function Dashboard() {
-  const [draft, setDraft] = useState<DashboardFilters>(() =>
-      dashboardDefaults(),
-    ),
-    [filters, setFilters] = useState(draft)
+  const [draftFilters, setDraft] = useState<DashboardFilters | null>(null)
+  const [filters, setFilters] = useState<DashboardFilters | null>(null)
   const [error, setError] = useState('')
   const records = useRemote(
     useCallback(
-      (signal: AbortSignal) =>
-        api<DashboardSummary>('/api/intel-dashboard/summary', {
+      async (signal: AbortSignal) => {
+        const loadSummary = (selection: DashboardFilters) =>
+          api<DashboardSummary>('/api/intel-dashboard/summary', {
+            method: 'POST',
+            body: selection,
+            signal,
+          })
+        const recent = await loadSummary(filters ?? dashboardDefaults())
+        if (filters || recent.totals.incidents > 0) return { summary: recent }
+
+        const history = await api<{ items: Data[] }>('/api/intel-dashboard/data', {
           method: 'POST',
-          body: filters,
+          body: { size: 1, dateTo: recent.period.from },
           signal,
-        }),
+        })
+        const latestDate = new Date(string(get(history.items?.[0], 'event.date_event')))
+        if (!Number.isFinite(latestDate.getTime())) return { summary: recent }
+
+        const historicalPeriod = dashboardDefaults(recent.period.days, latestDate)
+        if (historicalPeriod.dateTo >= recent.period.from) return { summary: recent }
+        return { summary: await loadSummary(historicalPeriod), historical: true }
+      },
       [filters],
     ),
   )
-  const summary = records.value
+  const summary = records.value?.summary
+  const requested = filters ?? dashboardDefaults()
   const applied = summary
-    ? { ...filters, dateFrom: summary.period.from, dateTo: summary.period.to }
-    : filters
+    ? { ...requested, dateFrom: summary.period.from, dateTo: summary.period.to }
+    : requested
+  const draft = draftFilters ?? applied
   const browse = (overrides: Record<string, string | undefined> = {}) =>
     navigate(dashboardSearch(applied, overrides))
   function apply(event: FormEvent) {
@@ -305,13 +321,13 @@ export function Dashboard() {
             territoire={draft.territoire}
             onProvinceChange={(province) =>
               setDraft((previous) => ({
-                ...previous,
+                ...(previous ?? draft),
                 province,
                 territoire: '',
               }))
             }
             onTerritoireChange={(territoire) =>
-              setDraft((previous) => ({ ...previous, territoire }))
+              setDraft((previous) => ({ ...(previous ?? draft), territoire }))
             }
           />
           <label className="date-filter">
@@ -368,9 +384,8 @@ export function Dashboard() {
           <button
             className="button quiet small"
             onClick={() => {
-              const next = dashboardDefaults()
-              setDraft(next)
-              setFilters(next)
+              setDraft(null)
+              setFilters(null)
               setError('')
             }}
           >
@@ -404,6 +419,12 @@ export function Dashboard() {
             </div>
             <span>Calculé le {dateLabel(summary.generated_at)}</span>
           </div>
+          {records.value?.historical && (
+            <p className="dashboard-note">
+              Les 30 derniers jours ne contiennent aucun incident enregistré.
+              La période affichée se termine au dernier incident disponible.
+            </p>
+          )}
           {summary.period.includes_today && (
             <p className="dashboard-note">
               La période inclut la journée en cours, encore partielle. Les

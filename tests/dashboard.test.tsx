@@ -127,6 +127,38 @@ it('présente une erreur de chargement avec une possibilité de réessayer', asy
   await screen.findByRole('heading', { name: 'Acteurs mentionnés' })
 })
 
+it('affiche la dernière période disponible à l’ouverture et respecte ensuite les dates choisies', async () => {
+  vi.mocked(api).mockImplementation(async (path, options) => {
+    if (path === '/api/intel-dashboard/data') {
+      return { items: [{ event: { date_event: '2001-08-19T23:30:00Z' } }] }
+    }
+    if (path === '/api/intel-dashboard/summary') {
+      const dates = options?.body as ReturnType<typeof dashboardDefaults>
+      return {
+        ...dashboardFixture,
+        totals: { incidents: dates.dateTo === '2001-08-20' ? 7 : 0 },
+        period: {
+          ...dashboardFixture.period,
+          from: dates.dateFrom,
+          to: dates.dateTo,
+        },
+      }
+    }
+    return { items: [] }
+  })
+
+  render(<Dashboard />)
+  await screen.findByRole('button', { name: /Incidents enregistrés : 7,/ })
+  expect((screen.getByLabelText('Date de début') as HTMLInputElement).value).toBe('2001-07-22')
+  expect((screen.getByLabelText('Date de fin') as HTMLInputElement).value).toBe('2001-08-20')
+  expect(screen.getByText(/La période affichée se termine au dernier incident/)).toBeTruthy()
+
+  await userEvent.click(screen.getByRole('button', { name: '7 jours' }))
+  await screen.findByRole('button', { name: /Incidents enregistrés : 0,/ })
+  expect(screen.queryByText(/La période affichée se termine au dernier incident/)).toBeNull()
+  expect(vi.mocked(api).mock.calls.filter(([path]) => path === '/api/intel-dashboard/data')).toHaveLength(1)
+})
+
 it('évite les pourcentages trompeurs quand la période précédente vaut zéro', () => {
   expect(comparison(5, 0)).toEqual({
     difference: 5,
